@@ -1,4 +1,4 @@
-# Copyright 2021 The Orbit Authors. All Rights Reserved.
+# Copyright 2022 The Orbit Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 """Utilities for creating loop functions."""
 
+from absl import logging
 from orbit.utils import tpu_summaries
 
 import tensorflow as tf
@@ -65,8 +66,8 @@ def create_loop_fn(step_fn):
       The final state returned by `reduce_fn`, or `None` if `state` and
       `reduce_fn` are not provided.
     """
+    step = 0
     try:
-      step = 0
       # To make sure the OutOfRangeError exception can be handled well under
       # async remote eager, we need to wrap the loop body in `async_scope`.
       with tf.experimental.async_scope():
@@ -77,6 +78,7 @@ def create_loop_fn(step_fn):
           step += 1
         return state
     except (StopIteration, tf.errors.OutOfRangeError):
+      logging.info("The dataset iterator is exhausted after %d steps.", step)
       tf.experimental.async_clear_error()
       return state
 
@@ -159,6 +161,21 @@ def create_tf_while_loop_fn_with_state(step_fn):
           "`num_steps` should be a `tf.Tensor`. Passing a Python value can "
           "cause unnecessary retracing when wrapped by `tf.function`.")
 
+    def _get_relaxed_tensor_shape(t):
+      """Returns a `TensorShape` with all `None` dimensions."""
+      if not tf.is_tensor(t):
+        return None
+
+      shape = t.shape
+      if shape.rank is not None and shape.rank > 0:
+        return tf.TensorShape([None] * shape.rank)
+      return shape
+
+    def _get_relaxed_shape_structure(s):
+      """Returns the relaxed shape of the input nested structure `s`."""
+      return tf.nest.pack_sequence_as(
+          state, [_get_relaxed_tensor_shape(t) for t in tf.nest.flatten(s)])
+
     for _ in tf.range(num_steps):
       # Clear out the outer name scope so the ops created inside `tf.while_loop`
       # don't get "while/" as name prefix.
@@ -167,9 +184,7 @@ def create_tf_while_loop_fn_with_state(step_fn):
         # across iterations. This is useful to aggregate outputs from each step
         # and concat to `state`.
         tf.autograph.experimental.set_loop_options(
-            shape_invariants=[(t, tf.TensorShape([None] * t.shape.rank))
-                              for t in tf.nest.flatten(state)
-                              if tf.is_tensor(t)])
+            shape_invariants=[(state, _get_relaxed_shape_structure(state))])
         outputs = step_fn(iterator)
         state = reduce_fn(state, outputs)
     return state

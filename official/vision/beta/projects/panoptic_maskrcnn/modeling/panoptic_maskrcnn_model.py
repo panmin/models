@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,38 +18,40 @@ from typing import List, Mapping, Optional, Union
 
 import tensorflow as tf
 
-from official.vision.beta.modeling import maskrcnn_model
+from official.projects.deepmac_maskrcnn.modeling import maskrcnn_model
 
 
-@tf.keras.utils.register_keras_serializable(package='Vision')
-class PanopticMaskRCNNModel(maskrcnn_model.MaskRCNNModel):
+class PanopticMaskRCNNModel(maskrcnn_model.DeepMaskRCNNModel):
   """The Panoptic Segmentation model."""
 
-  def __init__(self,
-               backbone: tf.keras.Model,
-               decoder: tf.keras.Model,
-               rpn_head: tf.keras.layers.Layer,
-               detection_head: Union[tf.keras.layers.Layer,
-                                     List[tf.keras.layers.Layer]],
-               roi_generator: tf.keras.layers.Layer,
-               roi_sampler: Union[tf.keras.layers.Layer,
-                                  List[tf.keras.layers.Layer]],
-               roi_aligner: tf.keras.layers.Layer,
-               detection_generator: tf.keras.layers.Layer,
-               mask_head: Optional[tf.keras.layers.Layer] = None,
-               mask_sampler: Optional[tf.keras.layers.Layer] = None,
-               mask_roi_aligner: Optional[tf.keras.layers.Layer] = None,
-               segmentation_backbone: Optional[tf.keras.Model] = None,
-               segmentation_decoder: Optional[tf.keras.Model] = None,
-               segmentation_head: tf.keras.layers.Layer = None,
-               class_agnostic_bbox_pred: bool = False,
-               cascade_class_ensemble: bool = False,
-               min_level: Optional[int] = None,
-               max_level: Optional[int] = None,
-               num_scales: Optional[int] = None,
-               aspect_ratios: Optional[List[float]] = None,
-               anchor_size: Optional[float] = None,
-               **kwargs):
+  def __init__(
+      self,
+      backbone: tf.keras.Model,
+      decoder: tf.keras.Model,
+      rpn_head: tf.keras.layers.Layer,
+      detection_head: Union[tf.keras.layers.Layer,
+                            List[tf.keras.layers.Layer]],
+      roi_generator: tf.keras.layers.Layer,
+      roi_sampler: Union[tf.keras.layers.Layer,
+                         List[tf.keras.layers.Layer]],
+      roi_aligner: tf.keras.layers.Layer,
+      detection_generator: tf.keras.layers.Layer,
+      panoptic_segmentation_generator: Optional[tf.keras.layers.Layer] = None,
+      mask_head: Optional[tf.keras.layers.Layer] = None,
+      mask_sampler: Optional[tf.keras.layers.Layer] = None,
+      mask_roi_aligner: Optional[tf.keras.layers.Layer] = None,
+      segmentation_backbone: Optional[tf.keras.Model] = None,
+      segmentation_decoder: Optional[tf.keras.Model] = None,
+      segmentation_head: tf.keras.layers.Layer = None,
+      class_agnostic_bbox_pred: bool = False,
+      cascade_class_ensemble: bool = False,
+      min_level: Optional[int] = None,
+      max_level: Optional[int] = None,
+      num_scales: Optional[int] = None,
+      aspect_ratios: Optional[List[float]] = None,
+      anchor_size: Optional[float] = None,
+      use_gt_boxes_for_masks: bool = False,  # pytype: disable=annotation-type-mismatch  # typed-keras
+      **kwargs):
     """Initializes the Panoptic Mask R-CNN model.
 
     Args:
@@ -62,6 +64,8 @@ class PanopticMaskRCNNModel(maskrcnn_model.MaskRCNNModel):
         detection heads.
       roi_aligner: the ROI aligner.
       detection_generator: the detection generator.
+      panoptic_segmentation_generator: the panoptic segmentation generator that
+        is used to merge instance and semantic segmentation masks.
       mask_head: the mask head.
       mask_sampler: the mask sampler.
       mask_roi_aligner: the ROI alginer for mask prediction.
@@ -91,6 +95,7 @@ class PanopticMaskRCNNModel(maskrcnn_model.MaskRCNNModel):
         aspect_ratios=[1.0, 2.0, 0.5] adds three anchors on each scale level.
       anchor_size: A number representing the scale of size of the base anchor to
         the feature stride 2^level.
+      use_gt_boxes_for_masks: `bool`, whether to use only gt boxes for masks.
       **kwargs: keyword arguments to be passed.
     """
     super(PanopticMaskRCNNModel, self).__init__(
@@ -112,6 +117,7 @@ class PanopticMaskRCNNModel(maskrcnn_model.MaskRCNNModel):
         num_scales=num_scales,
         aspect_ratios=aspect_ratios,
         anchor_size=anchor_size,
+        use_gt_boxes_for_masks=use_gt_boxes_for_masks,
         **kwargs)
 
     self._config_dict.update({
@@ -119,6 +125,10 @@ class PanopticMaskRCNNModel(maskrcnn_model.MaskRCNNModel):
         'segmentation_decoder': segmentation_decoder,
         'segmentation_head': segmentation_head
     })
+
+    if panoptic_segmentation_generator is not None:
+      self._config_dict.update(
+          {'panoptic_segmentation_generator': panoptic_segmentation_generator})
 
     if not self._include_mask:
       raise ValueError(
@@ -131,15 +141,17 @@ class PanopticMaskRCNNModel(maskrcnn_model.MaskRCNNModel):
     self.segmentation_backbone = segmentation_backbone
     self.segmentation_decoder = segmentation_decoder
     self.segmentation_head = segmentation_head
+    self.panoptic_segmentation_generator = panoptic_segmentation_generator
 
   def call(self,
            images: tf.Tensor,
-           image_shape: tf.Tensor,
+           image_info: tf.Tensor,
            anchor_boxes: Optional[Mapping[str, tf.Tensor]] = None,
            gt_boxes: Optional[tf.Tensor] = None,
            gt_classes: Optional[tf.Tensor] = None,
            gt_masks: Optional[tf.Tensor] = None,
            training: Optional[bool] = None) -> Mapping[str, tf.Tensor]:
+    image_shape = image_info[:, 1, :]
     model_outputs = super(PanopticMaskRCNNModel, self).call(
         images=images,
         image_shape=image_shape,
@@ -161,11 +173,16 @@ class PanopticMaskRCNNModel(maskrcnn_model.MaskRCNNModel):
       decoder_features = model_outputs['decoder_features']
 
     segmentation_outputs = self.segmentation_head(
-        backbone_features, decoder_features, training=training)
+        (backbone_features, decoder_features), training=training)
 
     model_outputs.update({
         'segmentation_outputs': segmentation_outputs,
     })
+
+    if not training and self.panoptic_segmentation_generator is not None:
+      panoptic_outputs = self.panoptic_segmentation_generator(
+          model_outputs, image_info=image_info)
+      model_outputs.update({'panoptic_outputs': panoptic_outputs})
 
     return model_outputs
 

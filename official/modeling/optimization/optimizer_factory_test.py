@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -426,6 +426,18 @@ class OptimizerFactoryTest(tf.test.TestCase, parameterized.TestCase):
 
     for step, value in expected_lr_step_values:
       self.assertAlmostEqual(lr(step).numpy(), value)
+
+
+class OptimizerFactoryRegistryTest(tf.test.TestCase):
+
+  def test_registry(self):
+
+    class MyClass():
+      pass
+    optimizer_factory.register_optimizer_cls('test', MyClass)
+    self.assertIn('test', optimizer_factory.OPTIMIZERS_CLS)
+    with self.assertRaisesRegex(ValueError, 'test already registered.*'):
+      optimizer_factory.register_optimizer_cls('test', MyClass)
 
 if __name__ == '__main__':
   tf.test.main()

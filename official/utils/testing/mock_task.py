@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,13 +15,14 @@
 """Mock task for testing."""
 
 import dataclasses
+
 import numpy as np
 import tensorflow as tf
 
 from official.core import base_task
 from official.core import config_definitions as cfg
 from official.core import exp_factory
-from official.core import task_factory
+from official.modeling.hyperparams import base_config
 
 
 class MockModel(tf.keras.Model):
@@ -41,7 +42,7 @@ class MockTaskConfig(cfg.TaskConfig):
   pass
 
 
-@task_factory.register_task_cls(MockTaskConfig)
+@base_config.bind(MockTaskConfig)
 class MockTask(base_task.Task):
   """Mock task object for testing."""
 

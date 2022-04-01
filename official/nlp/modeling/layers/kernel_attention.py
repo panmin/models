@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -302,7 +302,7 @@ class KernelAttention(tf.keras.layers.MultiHeadAttention):
     return attention_output
 
   def _build_from_signature(self, query, value, key=None):
-    super()._build_from_signature(query=query, value=value, key=key)
+    super()._build_from_signature(query=query, value=value, key=key)  # pytype: disable=attribute-error  # typed-keras
     if self._begin_kernel > 0:
       common_kwargs = dict(
           kernel_initializer=self._kernel_initializer,

@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,13 +15,14 @@
 """Multi-task image multi-taskSimCLR model definition."""
 from typing import Dict, Text
 
+from absl import logging
 import tensorflow as tf
 
 from official.modeling.multitask import base_model
-from official.vision.beta.modeling import backbones
 from official.vision.beta.projects.simclr.configs import multitask_config as simclr_multitask_config
 from official.vision.beta.projects.simclr.heads import simclr_head
 from official.vision.beta.projects.simclr.modeling import simclr_model
+from official.vision.modeling import backbones
 
 PROJECTION_OUTPUT_KEY = 'projection_outputs'
 SUPERVISED_OUTPUT_KEY = 'supervised_outputs'
@@ -52,15 +53,10 @@ class SimCLRMTModel(base_model.MultiTaskBaseModel):
         norm_activation_config=config.norm_activation,
         l2_regularizer=self._l2_regularizer)
 
-    super().__init__(**kwargs)
-
-  def _instantiate_sub_tasks(self) -> Dict[Text, tf.keras.Model]:
-    tasks = {}
-
     # Build the shared projection head
     norm_activation_config = self._config.norm_activation
     projection_head_config = self._config.projection_head
-    projection_head = simclr_head.ProjectionHead(
+    self._projection_head = simclr_head.ProjectionHead(
         proj_output_dim=projection_head_config.proj_output_dim,
         num_proj_layers=projection_head_config.num_proj_layers,
         ft_proj_idx=projection_head_config.ft_proj_idx,
@@ -68,6 +64,11 @@ class SimCLRMTModel(base_model.MultiTaskBaseModel):
         use_sync_bn=norm_activation_config.use_sync_bn,
         norm_momentum=norm_activation_config.norm_momentum,
         norm_epsilon=norm_activation_config.norm_epsilon)
+
+    super().__init__(**kwargs)
+
+  def _instantiate_sub_tasks(self) -> Dict[Text, tf.keras.Model]:
+    tasks = {}
 
     for model_config in self._config.heads:
       # Build supervised head
@@ -87,13 +88,39 @@ class SimCLRMTModel(base_model.MultiTaskBaseModel):
       tasks[model_config.task_name] = simclr_model.SimCLRModel(
           input_specs=self._input_specs,
           backbone=self._backbone,
-          projection_head=projection_head,
+          projection_head=self._projection_head,
           supervised_head=supervised_head,
           mode=model_config.mode,
           backbone_trainable=self._config.backbone_trainable)
 
     return tasks
 
-  # TODO(huythong): Implement initialize function to load the pretrained
-  # checkpoint of backbone.
-  # def initialize(self):
+  def initialize(self):
+    """Loads the multi-task SimCLR model with a pretrained checkpoint."""
+    ckpt_dir_or_file = self._config.init_checkpoint
+    if tf.io.gfile.isdir(ckpt_dir_or_file):
+      ckpt_dir_or_file = tf.train.latest_checkpoint(ckpt_dir_or_file)
+    if not ckpt_dir_or_file:
+      return
+
+    logging.info('Loading pretrained %s', self._config.init_checkpoint_modules)
+    if self._config.init_checkpoint_modules == 'backbone':
+      pretrained_items = dict(backbone=self._backbone)
+    elif self._config.init_checkpoint_modules == 'backbone_projection':
+      pretrained_items = dict(
+          backbone=self._backbone, projection_head=self._projection_head)
+    else:
+      raise ValueError(
+          "Only 'backbone_projection' or 'backbone' can be used to "
+          'initialize the model.')
+
+    ckpt = tf.train.Checkpoint(**pretrained_items)
+    status = ckpt.read(ckpt_dir_or_file)
+    status.expect_partial().assert_existing_objects_matched()
+    logging.info('Finished loading pretrained checkpoint from %s',
+                 ckpt_dir_or_file)
+
+  @property
+  def checkpoint_items(self):
+    """Returns a dictionary of items to be additionally checkpointed."""
+    return dict(backbone=self._backbone, projection_head=self._projection_head)

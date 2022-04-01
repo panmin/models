@@ -68,7 +68,7 @@ Note that the dataset is large (~1TB).
 
 ### Preprocess the data
 
-Follow the instructions in [Data Preprocessing](data/preprocessing) to
+Follow the instructions in [Data Preprocessing](./preprocessing) to
 preprocess the Criteo Terabyte dataset.
 
 Data preprocessing steps are summarized below.
@@ -87,7 +87,8 @@ Categorical features:
     function such as modulus will suffice, i.e. feature_value % MAX_INDEX.
 
 The vocabulary sizes resulting from pre-processing are passed in to the model
-trainer using the model.vocab_sizes config.
+trainer using the model.vocab_sizes config. Note that provided values in sample below
+are only valid for Criteo Terabyte dataset.
 
 The full dataset is composed of 24 directories. Partition the data into training
 and eval sets, for example days 1-23 for training and day 24 for evaluation.
@@ -96,9 +97,9 @@ Training and eval datasets are expected to be saved in many tab-separated values
 (TSV) files in the following format: numberical fetures, categorical features
 and label.
 
-On each row of the TSV file first `num_dense_features` inputs are numerical
-features, then `vocab_sizes` categorical features and the last one is the label
-(either 0 or 1). Each i-th categorical feature is expected to be an integer in
+On each row of the TSV file, the first one is the label
+(either 0 or 1), the next `num_dense_features` inputs are numerical
+features, then `vocab_sizes` categorical features. Each i-th categorical feature is expected to be an integer in
 the range of `[0, vocab_sizes[i])`.
 
 ## Train and Evaluate

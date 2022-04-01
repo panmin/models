@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -120,7 +120,7 @@ class MultiChannelAttention(tf.keras.layers.MultiHeadAttention):
   """
 
   def _build_attention(self, rank):
-    super(MultiChannelAttention, self)._build_attention(rank)
+    super(MultiChannelAttention, self)._build_attention(rank)  # pytype: disable=attribute-error  # typed-keras
     self._masked_softmax = masked_softmax.MaskedSoftmax(mask_expansion_axes=[2])
 
   def call(self,

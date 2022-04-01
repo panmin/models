@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -90,6 +90,31 @@ class BaseConfigTest(parameterized.TestCase, tf.test.TestCase):
     params = base_config.Config()
     with self.assertRaises(AttributeError):
       _ = params.a
+
+  def test_cls(self):
+    params = base_config.Config()
+    with self.assertRaisesRegex(
+        AttributeError,
+        '`BUILDER` is a property and `_BUILDER` is the reserved'):
+      params.BUILDER = DumpConfig2
+    with self.assertRaisesRegex(
+        AttributeError,
+        '`BUILDER` is a property and `_BUILDER` is the reserved'):
+      params._BUILDER = DumpConfig2
+
+    base_config.bind(DumpConfig1)(DumpConfig2)
+    params = DumpConfig1()
+    self.assertEqual(params.BUILDER, DumpConfig2)
+    with self.assertRaisesRegex(ValueError,
+                                'Inside a program, we should not bind'):
+      base_config.bind(DumpConfig1)(DumpConfig2)
+
+    def _test():
+      return 'test'
+
+    base_config.bind(DumpConfig2)(_test)
+    params = DumpConfig2()
+    self.assertEqual(params.BUILDER(), 'test')
 
   def test_nested_config_types(self):
     config = DumpConfig3()

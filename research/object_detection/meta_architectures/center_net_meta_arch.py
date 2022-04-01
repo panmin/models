@@ -104,6 +104,32 @@ class CenterNetFeatureExtractor(tf.keras.Model):
 
     return (inputs - channel_means)/channel_stds
 
+  def preprocess_reverse(self, preprocessed_inputs):
+    """Undo the preprocessing and return the raw image.
+
+    This is a convenience function for some algorithms that require access
+    to the raw inputs.
+
+    Args:
+      preprocessed_inputs: A [batch_size, height, width, channels] float
+        tensor preprocessed_inputs from the preprocess function.
+
+    Returns:
+      images: A [batch_size, height, width, channels] float tensor with
+        the preprocessing removed.
+    """
+    channel_means = tf.reshape(tf.constant(self._channel_means),
+                               [1, 1, 1, -1])
+    channel_stds = tf.reshape(tf.constant(self._channel_stds),
+                              [1, 1, 1, -1])
+    inputs = (preprocessed_inputs * channel_stds) + channel_means
+
+    if self._bgr_ordering:
+      blue, green, red = tf.unstack(inputs, axis=3)
+      inputs = tf.stack([red, green, blue], axis=3)
+
+    return inputs
+
   @property
   @abc.abstractmethod
   def out_stride(self):
@@ -301,8 +327,21 @@ def top_k_feature_map_locations(feature_map, max_pool_kernel_size=3, k=100,
                                                   perm=[0, 3, 1, 2])
       feature_map_peaks_transposed = tf.reshape(
           feature_map_peaks_transposed, [batch_size, num_channels, -1])
+      # safe_k will be used whenever there are fewer positions in the heatmap
+      # than the requested number of locations to score. In that case, all
+      # positions are returned in sorted order. To ensure consistent shapes for
+      # downstream ops the outputs are padded with zeros. Safe_k is also
+      # fine for TPU because TPUs require a fixed input size so the number of
+      # positions will also be fixed.
+      safe_k = tf.minimum(k, tf.shape(feature_map_peaks_transposed)[-1])
       scores, peak_flat_indices = tf.math.top_k(
-          feature_map_peaks_transposed, k=k)
+          feature_map_peaks_transposed, k=safe_k)
+      scores = tf.pad(scores, [(0, 0), (0, 0), (0, k - safe_k)])
+      peak_flat_indices = tf.pad(peak_flat_indices,
+                                 [(0, 0), (0, 0), (0, k - safe_k)])
+      scores = tf.ensure_shape(scores, (batch_size, num_channels, k))
+      peak_flat_indices = tf.ensure_shape(peak_flat_indices,
+                                          (batch_size, num_channels, k))
     # Convert the indices such that they represent the location in the full
     # (flattened) feature map of size [batch, height * width * channels].
     channel_idx = tf.range(num_channels)[tf.newaxis, :, tf.newaxis]
@@ -317,7 +356,9 @@ def top_k_feature_map_locations(feature_map, max_pool_kernel_size=3, k=100,
           feature_map_peaks_flat, axis=1, output_type=tf.dtypes.int32), axis=-1)
     else:
       feature_map_peaks_flat = tf.reshape(feature_map_peaks, [batch_size, -1])
-      scores, peak_flat_indices = tf.math.top_k(feature_map_peaks_flat, k=k)
+      safe_k = tf.minimum(k, tf.shape(feature_map_peaks_flat)[1])
+      scores, peak_flat_indices = tf.math.top_k(feature_map_peaks_flat,
+                                                k=safe_k)
 
   # Get x, y and channel indices corresponding to the top indices in the flat
   # array.
@@ -780,6 +821,263 @@ def prediction_to_single_instance_keypoints(
        keypoint_offset,
        keypoint_score_heatmap=keypoint_heatmap)
   return keypoint_candidates, keypoint_scores, None
+
+
+def _gaussian_weighted_map_const_multi(
+    y_grid, x_grid, heatmap, points_y, points_x, boxes,
+    gaussian_denom_ratio):
+  """Rescores heatmap using the distance information.
+
+  The function is called when the candidate_ranking_mode in the
+  KeypointEstimationParams is set to be 'gaussian_weighted_const'. The
+  keypoint candidates are ranked using the formula:
+    heatmap_score * exp((-distances^2) / (gaussian_denom))
+
+  where 'gaussian_denom' is determined by:
+    min(output_feature_height, output_feature_width) * gaussian_denom_ratio
+
+  the 'distances' are the distances between the grid coordinates and the target
+  points.
+
+  Note that the postfix 'const' refers to the fact that the denominator is a
+  constant given the input image size, not scaled by the size of each of the
+  instances.
+
+  Args:
+    y_grid: A float tensor with shape [height, width] representing the
+      y-coordinate of each pixel grid.
+    x_grid: A float tensor with shape [height, width] representing the
+      x-coordinate of each pixel grid.
+    heatmap: A float tensor with shape [height, width, num_keypoints]
+      representing the heatmap to be rescored.
+    points_y: A float tensor with shape [num_instances, num_keypoints]
+      representing the y coordinates of the target points for each channel.
+    points_x: A float tensor with shape [num_instances, num_keypoints]
+      representing the x coordinates of the target points for each channel.
+    boxes: A tensor of shape [num_instances, 4] with predicted bounding boxes
+      for each instance, expressed in the output coordinate frame.
+    gaussian_denom_ratio: A constant used in the above formula that determines
+      the denominator of the Gaussian kernel.
+
+  Returns:
+    A float tensor with shape [height, width, channel] representing
+    the rescored heatmap.
+  """
+  num_instances, _ = _get_shape(boxes, 2)
+  height, width, num_keypoints = _get_shape(heatmap, 3)
+
+  # [height, width, num_instances, num_keypoints].
+  # Note that we intentionally avoid using tf.newaxis as TfLite converter
+  # doesn't like it.
+  y_diff = (
+      tf.reshape(y_grid, [height, width, 1, 1]) -
+      tf.reshape(points_y, [1, 1, num_instances, num_keypoints]))
+  x_diff = (
+      tf.reshape(x_grid, [height, width, 1, 1]) -
+      tf.reshape(points_x, [1, 1, num_instances, num_keypoints]))
+  distance_square = y_diff * y_diff + x_diff * x_diff
+
+  y_min, x_min, y_max, x_max = tf.split(boxes, 4, axis=1)
+
+  # Make the mask with all 1.0 in the box regions.
+  # Shape: [height, width, num_instances]
+  in_boxes = tf.math.logical_and(
+      tf.math.logical_and(
+          tf.reshape(y_grid, [height, width, 1]) >= tf.reshape(
+              y_min, [1, 1, num_instances]),
+          tf.reshape(y_grid, [height, width, 1]) < tf.reshape(
+              y_max, [1, 1, num_instances])),
+      tf.math.logical_and(
+          tf.reshape(x_grid, [height, width, 1]) >= tf.reshape(
+              x_min, [1, 1, num_instances]),
+          tf.reshape(x_grid, [height, width, 1]) < tf.reshape(
+              x_max, [1, 1, num_instances])))
+  in_boxes = tf.cast(in_boxes, dtype=tf.float32)
+
+  gaussian_denom = tf.cast(
+      tf.minimum(height, width), dtype=tf.float32) * gaussian_denom_ratio
+  # shape: [height, width, num_instances, num_keypoints]
+  gaussian_map = tf.exp((-1 * distance_square) / gaussian_denom)
+  return tf.expand_dims(heatmap, axis=2) * gaussian_map * tf.reshape(
+      in_boxes, [height, width, num_instances, 1])
+
+
+def prediction_tensors_to_multi_instance_kpts(
+    keypoint_heatmap_predictions,
+    keypoint_heatmap_offsets,
+    keypoint_score_heatmap=None):
+  """Converts keypoint heatmap predictions and offsets to keypoint candidates.
+
+  This function is similar to the 'prediction_tensors_to_single_instance_kpts'
+  function except that the input keypoint_heatmap_predictions is prepared to
+  have an additional 'num_instances' dimension for multi-instance prediction.
+
+  Args:
+    keypoint_heatmap_predictions: A float tensor of shape [height,
+      width, num_instances, num_keypoints] representing the per-keypoint and
+      per-instance heatmaps which is used for finding the best keypoint
+      candidate locations.
+    keypoint_heatmap_offsets: A float tensor of shape [height,
+      width, 2 * num_keypoints] representing the per-keypoint offsets.
+    keypoint_score_heatmap: (optional) A float tensor of shape [height, width,
+      num_keypoints] representing the heatmap which is used for reporting the
+      confidence scores. If not provided, then the values in the
+      keypoint_heatmap_predictions will be used.
+
+  Returns:
+    keypoint_candidates: A tensor of shape
+      [1, max_candidates, num_keypoints, 2] holding the
+      location of keypoint candidates in [y, x] format (expressed in absolute
+      coordinates in the output coordinate frame).
+    keypoint_scores: A float tensor of shape
+      [1, max_candidates, num_keypoints] with the scores for each
+      keypoint candidate. The scores come directly from the heatmap predictions.
+  """
+  height, width, num_instances, num_keypoints = _get_shape(
+      keypoint_heatmap_predictions, 4)
+
+  # [height * width, num_instances * num_keypoints].
+  feature_map_flattened = tf.reshape(
+      keypoint_heatmap_predictions,
+      [-1, num_instances * num_keypoints])
+
+  # [num_instances * num_keypoints].
+  peak_flat_indices = tf.math.argmax(
+      feature_map_flattened, axis=0, output_type=tf.dtypes.int32)
+
+  # Get x and y indices corresponding to the top indices in the flat array.
+  y_indices, x_indices = (
+      row_col_indices_from_flattened_indices(peak_flat_indices, width))
+  # [num_instances * num_keypoints].
+  y_indices = tf.reshape(y_indices, [-1])
+  x_indices = tf.reshape(x_indices, [-1])
+
+  # Prepare the indices to gather the offsets from the keypoint_heatmap_offsets.
+  kpts_idx = _multi_range(
+      limit=num_keypoints, value_repetitions=1,
+      range_repetitions=num_instances)
+  combined_indices = tf.stack([
+      y_indices,
+      x_indices,
+      kpts_idx
+  ], axis=1)
+
+  keypoint_heatmap_offsets = tf.reshape(
+      keypoint_heatmap_offsets, [height, width, num_keypoints, 2])
+  # Retrieve the keypoint offsets: shape:
+  # [num_instance * num_keypoints, 2].
+  selected_offsets_flat = tf.gather_nd(keypoint_heatmap_offsets,
+                                       combined_indices)
+  y_offsets, x_offsets = tf.unstack(selected_offsets_flat, axis=1)
+
+  keypoint_candidates = tf.stack([
+      tf.cast(y_indices, dtype=tf.float32) + tf.expand_dims(y_offsets, axis=0),
+      tf.cast(x_indices, dtype=tf.float32) + tf.expand_dims(x_offsets, axis=0)
+  ], axis=2)
+  keypoint_candidates = tf.reshape(
+      keypoint_candidates, [num_instances, num_keypoints, 2])
+
+  if keypoint_score_heatmap is None:
+    keypoint_scores = tf.gather_nd(
+        tf.reduce_max(keypoint_heatmap_predictions, axis=2), combined_indices)
+  else:
+    keypoint_scores = tf.gather_nd(keypoint_score_heatmap, combined_indices)
+  return tf.expand_dims(keypoint_candidates, axis=0), tf.reshape(
+      keypoint_scores, [1, num_instances, num_keypoints])
+
+
+def prediction_to_keypoints_argmax(
+    prediction_dict,
+    object_y_indices,
+    object_x_indices,
+    boxes,
+    task_name,
+    kp_params):
+  """Postprocess function to predict multi instance keypoints with argmax op.
+
+  This is a different implementation of the original keypoint postprocessing
+  function such that it avoids using topk op (replaced by argmax) as it runs
+  much slower in the browser. Note that in this function, we assume the
+  batch_size to be 1 to avoid using 5D tensors which cause issues when
+  converting to the TfLite model.
+
+  Args:
+    prediction_dict: a dictionary holding predicted tensors, returned from the
+      predict() method. This dictionary should contain keypoint prediction
+      feature maps for each keypoint task.
+    object_y_indices: A float tensor of shape [batch_size, max_instances]
+      representing the location indices of the object centers.
+    object_x_indices: A float tensor of shape [batch_size, max_instances]
+      representing the location indices of the object centers.
+    boxes: A tensor of shape [batch_size, num_instances, 4] with predicted
+      bounding boxes for each instance, expressed in the output coordinate
+      frame.
+    task_name: string, the name of the task this namedtuple corresponds to.
+      Note that it should be an unique identifier of the task.
+    kp_params: A `KeypointEstimationParams` object with parameters for a single
+      keypoint class.
+
+  Returns:
+    A tuple of two tensors:
+      keypoint_candidates: A float tensor with shape [batch_size,
+        num_instances, num_keypoints, 2] representing the yx-coordinates of
+        the keypoints in the output feature map space.
+      keypoint_scores: A float tensor with shape [batch_size, num_instances,
+        num_keypoints] representing the keypoint prediction scores.
+
+  Raises:
+    ValueError: if the candidate_ranking_mode is not supported.
+  """
+  keypoint_heatmap = tf.squeeze(tf.nn.sigmoid(prediction_dict[
+      get_keypoint_name(task_name, KEYPOINT_HEATMAP)][-1]), axis=0)
+  keypoint_offset = tf.squeeze(prediction_dict[
+      get_keypoint_name(task_name, KEYPOINT_OFFSET)][-1], axis=0)
+  keypoint_regression = tf.squeeze(prediction_dict[
+      get_keypoint_name(task_name, KEYPOINT_REGRESSION)][-1], axis=0)
+  height, width, num_keypoints = _get_shape(keypoint_heatmap, 3)
+
+  # Create the y,x grids: [height, width]
+  (y_grid, x_grid) = ta_utils.image_shape_to_grids(height, width)
+
+  # Prepare the indices to retrieve the information from object centers.
+  num_instances = _get_shape(object_y_indices, 2)[1]
+  combined_obj_indices = tf.stack([
+      tf.reshape(object_y_indices, [-1]),
+      tf.reshape(object_x_indices, [-1])
+  ], axis=1)
+
+  # Select the regression vectors from the object center.
+  selected_regression_flat = tf.gather_nd(
+      keypoint_regression, combined_obj_indices)
+  selected_regression = tf.reshape(
+      selected_regression_flat, [num_instances, num_keypoints, 2])
+  (y_reg, x_reg) = tf.unstack(selected_regression, axis=2)
+
+  # shape: [num_instances, num_keypoints].
+  y_regressed = tf.cast(
+      tf.reshape(object_y_indices, [num_instances, 1]),
+      dtype=tf.float32) + y_reg
+  x_regressed = tf.cast(
+      tf.reshape(object_x_indices, [num_instances, 1]),
+      dtype=tf.float32) + x_reg
+
+  if kp_params.candidate_ranking_mode == 'gaussian_weighted_const':
+    rescored_heatmap = _gaussian_weighted_map_const_multi(
+        y_grid, x_grid, keypoint_heatmap, y_regressed, x_regressed,
+        tf.squeeze(boxes, axis=0), kp_params.gaussian_denom_ratio)
+
+    # shape: [height, width, num_keypoints].
+    keypoint_score_heatmap = tf.math.reduce_max(rescored_heatmap, axis=2)
+  else:
+    raise ValueError(
+        'Unsupported ranking mode in the multipose no topk method: %s' %
+        kp_params.candidate_ranking_mode)
+  (keypoint_candidates,
+   keypoint_scores) = prediction_tensors_to_multi_instance_kpts(
+       keypoint_heatmap_predictions=rescored_heatmap,
+       keypoint_heatmap_offsets=keypoint_offset,
+       keypoint_score_heatmap=keypoint_score_heatmap)
+  return keypoint_candidates, keypoint_scores
 
 
 def regressed_keypoints_at_object_centers(regressed_keypoint_predictions,
@@ -1326,6 +1624,13 @@ def _gather_candidates_at_indices(keypoint_candidates,
 
   gathered_keypoint_candidates = tf.transpose(
       nearby_candidate_coords_transposed, [0, 2, 1, 3])
+  # The reshape operation above may result in a singleton last dimension, but
+  # downstream code requires it to always be at least 2-valued.
+  original_shape = tf.shape(gathered_keypoint_candidates)
+  new_shape = tf.concat((original_shape[:3],
+                         [tf.maximum(original_shape[3], 2)]), 0)
+  gathered_keypoint_candidates = tf.reshape(gathered_keypoint_candidates,
+                                            new_shape)
   gathered_keypoint_scores = tf.transpose(nearby_candidate_scores_transposed,
                                           [0, 2, 1])
 
@@ -1533,15 +1838,9 @@ def convert_strided_predictions_to_normalized_keypoints(
       keypoints, window = inputs
       return keypoint_ops.clip_to_window(keypoints, window)
 
-    # Specify the TensorSpec explicitly in the tf.map_fn to make it tf.lite
-    # compatible.
-    kpts_dims = _get_shape(keypoint_coords_normalized, 4)
-    output_spec = tf.TensorSpec(
-        shape=[kpts_dims[1], kpts_dims[2], kpts_dims[3]], dtype=tf.float32)
-    keypoint_coords_normalized = tf.map_fn(
-        clip_to_window, (keypoint_coords_normalized, batch_window),
-        dtype=tf.float32, back_prop=False,
-        fn_output_signature=output_spec)
+    keypoint_coords_normalized = shape_utils.static_or_dynamic_map_fn(
+        clip_to_window, [keypoint_coords_normalized, batch_window],
+        dtype=tf.float32, back_prop=False)
     keypoint_scores = tf.where(valid_indices, keypoint_scores,
                                tf.zeros_like(keypoint_scores))
   return keypoint_coords_normalized, keypoint_scores
@@ -1900,7 +2199,8 @@ class KeypointEstimationParams(
         'heatmap_head_kernel_sizes', 'offset_head_num_filters',
         'offset_head_kernel_sizes', 'regress_head_num_filters',
         'regress_head_kernel_sizes', 'score_distance_multiplier',
-        'std_dev_multiplier', 'rescoring_threshold'
+        'std_dev_multiplier', 'rescoring_threshold', 'gaussian_denom_ratio',
+        'argmax_postprocessing'
     ])):
   """Namedtuple to host object detection related parameters.
 
@@ -1948,7 +2248,9 @@ class KeypointEstimationParams(
               regress_head_kernel_sizes=(3),
               score_distance_multiplier=0.1,
               std_dev_multiplier=1.0,
-              rescoring_threshold=0.0):
+              rescoring_threshold=0.0,
+              argmax_postprocessing=False,
+              gaussian_denom_ratio=0.1):
     """Constructor with default values for KeypointEstimationParams.
 
     Args:
@@ -2049,6 +2351,12 @@ class KeypointEstimationParams(
         True. The detection score of an instance is set to be the average over
         the scores of the keypoints which their scores higher than the
         threshold.
+      argmax_postprocessing: Whether to use the keypoint postprocessing logic
+        that replaces the topk op with argmax. Usually used when exporting the
+        model for predicting keypoints of multiple instances in the browser.
+      gaussian_denom_ratio: The ratio used to multiply the image size to
+        determine the denominator of the Gaussian formula. Only applicable when
+        the candidate_ranking_mode is set to be 'gaussian_weighted_const'.
 
     Returns:
       An initialized KeypointEstimationParams namedtuple.
@@ -2067,7 +2375,8 @@ class KeypointEstimationParams(
         heatmap_head_num_filters, heatmap_head_kernel_sizes,
         offset_head_num_filters, offset_head_kernel_sizes,
         regress_head_num_filters, regress_head_kernel_sizes,
-        score_distance_multiplier, std_dev_multiplier, rescoring_threshold)
+        score_distance_multiplier, std_dev_multiplier, rescoring_threshold,
+        argmax_postprocessing, gaussian_denom_ratio)
 
 
 class ObjectCenterParams(
@@ -2075,7 +2384,7 @@ class ObjectCenterParams(
         'classification_loss', 'object_center_loss_weight', 'heatmap_bias_init',
         'min_box_overlap_iou', 'max_box_predictions', 'use_labeled_classes',
         'keypoint_weights_for_center', 'center_head_num_filters',
-        'center_head_kernel_sizes'
+        'center_head_kernel_sizes', 'peak_max_pool_kernel_size'
     ])):
   """Namedtuple to store object center prediction related parameters."""
 
@@ -2090,7 +2399,8 @@ class ObjectCenterParams(
               use_labeled_classes=False,
               keypoint_weights_for_center=None,
               center_head_num_filters=(256),
-              center_head_kernel_sizes=(3)):
+              center_head_kernel_sizes=(3),
+              peak_max_pool_kernel_size=3):
     """Constructor with default values for ObjectCenterParams.
 
     Args:
@@ -2115,6 +2425,8 @@ class ObjectCenterParams(
         by the object center prediction head.
       center_head_kernel_sizes: kernel size of the convolutional layers used
         by the object center prediction head.
+      peak_max_pool_kernel_size: Max pool kernel size to use to pull off peak
+        score locations in a neighborhood for the object detection heatmap.
     Returns:
       An initialized ObjectCenterParams namedtuple.
     """
@@ -2123,7 +2435,8 @@ class ObjectCenterParams(
                               object_center_loss_weight, heatmap_bias_init,
                               min_box_overlap_iou, max_box_predictions,
                               use_labeled_classes, keypoint_weights_for_center,
-                              center_head_num_filters, center_head_kernel_sizes)
+                              center_head_num_filters, center_head_kernel_sizes,
+                              peak_max_pool_kernel_size)
 
 
 class MaskParams(
@@ -2363,7 +2676,8 @@ class CenterNetMetaArch(model.DetectionModel):
                use_depthwise=False,
                compute_heatmap_sparse=False,
                non_max_suppression_fn=None,
-               unit_height_conv=False):
+               unit_height_conv=False,
+               output_prediction_dict=False):
     """Initializes a CenterNet model.
 
     Args:
@@ -2409,6 +2723,8 @@ class CenterNetMetaArch(model.DetectionModel):
       non_max_suppression_fn: Optional Non Max Suppression function to apply.
       unit_height_conv: If True, Conv2Ds in prediction heads have asymmetric
         kernels with height=1.
+      output_prediction_dict: If true, combines all items from the dictionary
+        returned by predict() function into the output of postprocess().
     """
     assert object_detection_params or keypoint_params_dict
     # Shorten the name for convenience and better formatting.
@@ -2434,6 +2750,7 @@ class CenterNetMetaArch(model.DetectionModel):
 
     self._use_depthwise = use_depthwise
     self._compute_heatmap_sparse = compute_heatmap_sparse
+    self._output_prediction_dict = output_prediction_dict
 
     # subclasses may not implement the unit_height_conv arg, so only provide it
     # as a kwarg if it is True.
@@ -2627,16 +2944,12 @@ class CenterNetMetaArch(model.DetectionModel):
       self.track_reid_classification_net = tf.keras.Sequential()
       for _ in range(self._track_params.num_fc_layers - 1):
         self.track_reid_classification_net.add(
-            tf.keras.layers.Dense(self._track_params.reid_embed_size,
-                                  input_shape=(
-                                      self._track_params.reid_embed_size,)))
+            tf.keras.layers.Dense(self._track_params.reid_embed_size))
         self.track_reid_classification_net.add(
             tf.keras.layers.BatchNormalization())
         self.track_reid_classification_net.add(tf.keras.layers.ReLU())
       self.track_reid_classification_net.add(
-          tf.keras.layers.Dense(self._track_params.num_track_ids,
-                                input_shape=(
-                                    self._track_params.reid_embed_size,)))
+          tf.keras.layers.Dense(self._track_params.num_track_ids))
     if self._temporal_offset_params is not None:
       prediction_heads[TEMPORAL_OFFSET] = self._make_prediction_net_list(
           num_feature_outputs, NUM_OFFSET_CHANNELS, name='temporal_offset',
@@ -2783,7 +3096,8 @@ class CenterNetMetaArch(model.DetectionModel):
     return loss_per_instance
 
   def _compute_object_detection_losses(self, input_height, input_width,
-                                       prediction_dict, per_pixel_weights):
+                                       prediction_dict, per_pixel_weights,
+                                       maximum_normalized_coordinate=1.1):
     """Computes the weighted object detection losses.
 
     This wrapper function calls the function which computes the losses for
@@ -2798,6 +3112,9 @@ class CenterNetMetaArch(model.DetectionModel):
       per_pixel_weights: A float tensor of shape [batch_size,
         out_height * out_width, 1] with 1s in locations where the spatial
         coordinates fall within the height and width in true_image_shapes.
+      maximum_normalized_coordinate: Maximum coordinate value to be considered
+        as normalized, default to 1.1. This is used to check bounds during
+        converting normalized coordinates to absolute coordinates.
 
     Returns:
       A dictionary of scalar float tensors representing the weighted losses for
@@ -2809,7 +3126,8 @@ class CenterNetMetaArch(model.DetectionModel):
         scale_predictions=prediction_dict[BOX_SCALE],
         offset_predictions=prediction_dict[BOX_OFFSET],
         input_height=input_height,
-        input_width=input_width)
+        input_width=input_width,
+        maximum_normalized_coordinate=maximum_normalized_coordinate)
     loss_dict = {}
     loss_dict[BOX_SCALE] = (
         self._od_params.scale_loss_weight * od_scale_loss)
@@ -2818,7 +3136,8 @@ class CenterNetMetaArch(model.DetectionModel):
     return loss_dict
 
   def _compute_box_scale_and_offset_loss(self, input_height, input_width,
-                                         scale_predictions, offset_predictions):
+                                         scale_predictions, offset_predictions,
+                                         maximum_normalized_coordinate=1.1):
     """Computes the scale loss of the object detection task.
 
     Args:
@@ -2830,6 +3149,9 @@ class CenterNetMetaArch(model.DetectionModel):
       offset_predictions: A list of float tensors of shape [batch_size,
         out_height, out_width, 2] representing the prediction heads of the model
         for object offset.
+      maximum_normalized_coordinate: Maximum coordinate value to be considered
+        as normalized, default to 1.1. This is used to check bounds during
+        converting normalized coordinates to absolute coordinates.
 
     Returns:
       A tuple of two losses:
@@ -2850,7 +3172,8 @@ class CenterNetMetaArch(model.DetectionModel):
          height=input_height,
          width=input_width,
          gt_boxes_list=gt_boxes_list,
-         gt_weights_list=gt_weights_list)
+         gt_weights_list=gt_weights_list,
+         maximum_normalized_coordinate=maximum_normalized_coordinate)
     batch_weights = tf.expand_dims(batch_weights, -1)
 
     scale_loss = 0
@@ -3535,6 +3858,7 @@ class CenterNetMetaArch(model.DetectionModel):
       prediction_dict: a dictionary holding predicted tensors with
         'preprocessed_inputs' - The input image after being resized and
           preprocessed by the feature extractor.
+        'extracted_features' - The output of the feature extractor.
         'object_center' - A list of size num_feature_outputs containing
           float tensors of size [batch_size, output_height, output_width,
           num_classes] representing the predicted object center heatmap logits.
@@ -3578,6 +3902,7 @@ class CenterNetMetaArch(model.DetectionModel):
       predictions[head_name] = [
           head(feature) for (feature, head) in zip(features_list, heads)
       ]
+    predictions['extracted_features'] = features_list
     predictions['preprocessed_inputs'] = preprocessed_inputs
 
     self._batched_prediction_tensor_names = predictions.keys()
@@ -3647,7 +3972,8 @@ class CenterNetMetaArch(model.DetectionModel):
           input_height=input_height,
           input_width=input_width,
           prediction_dict=prediction_dict,
-          per_pixel_weights=valid_anchor_weights)
+          per_pixel_weights=valid_anchor_weights,
+          maximum_normalized_coordinate=maximum_normalized_coordinate)
       for key in od_losses:
         od_losses[key] = od_losses[key] * self._od_params.task_loss_weight
       losses.update(od_losses)
@@ -3773,7 +4099,8 @@ class CenterNetMetaArch(model.DetectionModel):
     # center predictions.
     detection_scores, y_indices, x_indices, channel_indices = (
         top_k_feature_map_locations(
-            object_center_prob, max_pool_kernel_size=3,
+            object_center_prob,
+            max_pool_kernel_size=self._center_params.peak_max_pool_kernel_size,
             k=self._center_params.max_box_predictions))
     multiclass_scores = tf.gather_nd(
         object_center_prob, tf.stack([y_indices, x_indices], -1), batch_dims=1)
@@ -3787,6 +4114,10 @@ class CenterNetMetaArch(model.DetectionModel):
         fields.DetectionResultFields.num_detections: num_detections,
     }
 
+    if self._output_prediction_dict:
+      postprocess_dict.update(prediction_dict)
+      postprocess_dict['true_image_shapes'] = true_image_shapes
+
     boxes_strided = None
     if self._od_params:
       boxes_strided = (
@@ -3799,7 +4130,7 @@ class CenterNetMetaArch(model.DetectionModel):
 
       postprocess_dict.update({
           fields.DetectionResultFields.detection_boxes: boxes,
-          'detection_boxes_strided': boxes_strided
+          'detection_boxes_strided': boxes_strided,
       })
 
     if self._kp_params_dict:
@@ -3808,10 +4139,22 @@ class CenterNetMetaArch(model.DetectionModel):
       # the ops that are supported by tf.lite on GPU.
       clip_keypoints = self._should_clip_keypoints()
       if len(self._kp_params_dict) == 1 and self._num_classes == 1:
-        (keypoints, keypoint_scores,
-         keypoint_depths) = self._postprocess_keypoints_single_class(
-             prediction_dict, channel_indices, y_indices, x_indices,
-             boxes_strided, num_detections)
+        task_name, kp_params = next(iter(self._kp_params_dict.items()))
+        keypoint_depths = None
+        if kp_params.argmax_postprocessing:
+          keypoints, keypoint_scores = (
+              prediction_to_keypoints_argmax(
+                  prediction_dict,
+                  object_y_indices=y_indices,
+                  object_x_indices=x_indices,
+                  boxes=boxes_strided,
+                  task_name=task_name,
+                  kp_params=kp_params))
+        else:
+          (keypoints, keypoint_scores,
+           keypoint_depths) = self._postprocess_keypoints_single_class(
+               prediction_dict, channel_indices, y_indices, x_indices,
+               boxes_strided, num_detections)
         keypoints, keypoint_scores = (
             convert_strided_predictions_to_normalized_keypoints(
                 keypoints, keypoint_scores, self._stride, true_image_shapes,
@@ -3836,11 +4179,7 @@ class CenterNetMetaArch(model.DetectionModel):
                 keypoints, keypoint_scores, self._stride, true_image_shapes,
                 clip_out_of_frame_keypoints=clip_keypoints))
 
-      # Update instance scores based on keypoints.
-      scores = self._rescore_instances(
-          channel_indices, detection_scores, keypoint_scores)
       postprocess_dict.update({
-          fields.DetectionResultFields.detection_scores: scores,
           fields.DetectionResultFields.detection_keypoints: keypoints,
           fields.DetectionResultFields.detection_keypoint_scores:
               keypoint_scores
@@ -3918,6 +4257,22 @@ class CenterNetMetaArch(model.DetectionModel):
       postprocess_dict[
           fields.DetectionResultFields.num_detections] = num_detections
       postprocess_dict.update(nmsed_additional_fields)
+
+    # Perform the rescoring once the NMS is applied to make sure the rescored
+    # scores won't be washed out by the NMS function.
+    if self._kp_params_dict:
+      channel_indices = postprocess_dict[
+          fields.DetectionResultFields.detection_classes]
+      detection_scores = postprocess_dict[
+          fields.DetectionResultFields.detection_scores]
+      keypoint_scores = postprocess_dict[
+          fields.DetectionResultFields.detection_keypoint_scores]
+      # Update instance scores based on keypoints.
+      scores = self._rescore_instances(
+          channel_indices, detection_scores, keypoint_scores)
+      postprocess_dict.update({
+          fields.DetectionResultFields.detection_scores: scores,
+      })
     return postprocess_dict
 
   def postprocess_single_instance_keypoints(
@@ -4095,9 +4450,13 @@ class CenterNetMetaArch(model.DetectionModel):
     kpt_coords_for_example_list = []
     kpt_scores_for_example_list = []
     for ex_ind in range(batch_size):
-      kpt_coords_for_class_list = []
-      kpt_scores_for_class_list = []
-      instance_inds_for_class_list = []
+      # The tensors that host the keypoint coordinates and scores for all
+      # instances and all keypoints. They will be updated by scatter_nd_add for
+      # each keypoint tasks.
+      kpt_coords_for_example_all_det = tf.zeros(
+          [max_detections, total_num_keypoints, 2])
+      kpt_scores_for_example_all_det = tf.zeros(
+          [max_detections, total_num_keypoints])
       for task_name, kp_params in self._kp_params_dict.items():
         keypoint_heatmap = prediction_dict[
             get_keypoint_name(task_name, KEYPOINT_HEATMAP)][-1]
@@ -4107,77 +4466,62 @@ class CenterNetMetaArch(model.DetectionModel):
             get_keypoint_name(task_name, KEYPOINT_REGRESSION)][-1]
         instance_inds = self._get_instance_indices(
             classes, num_detections, ex_ind, kp_params.class_id)
-        num_ind = _get_shape(instance_inds, 1)
 
-        def true_fn(keypoint_heatmap, keypoint_offsets, keypoint_regression,
-                    classes, y_indices, x_indices, boxes, instance_inds, ex_ind,
-                    kp_params):
-          """Logics to execute when instance_inds is not an empty set."""
-          # Gather the feature map locations corresponding to the object class.
-          y_indices_for_kpt_class = tf.gather(y_indices, instance_inds, axis=1)
-          x_indices_for_kpt_class = tf.gather(x_indices, instance_inds, axis=1)
-          if boxes is None:
-            boxes_for_kpt_class = None
-          else:
-            boxes_for_kpt_class = tf.gather(boxes, instance_inds, axis=1)
+        # Gather the feature map locations corresponding to the object class.
+        y_indices_for_kpt_class = tf.gather(y_indices, instance_inds, axis=1)
+        x_indices_for_kpt_class = tf.gather(x_indices, instance_inds, axis=1)
+        if boxes is None:
+          boxes_for_kpt_class = None
+        else:
+          boxes_for_kpt_class = tf.gather(boxes, instance_inds, axis=1)
 
-          # Postprocess keypoints and scores for class and single image. Shapes
-          # are [1, num_instances_i, num_keypoints_i, 2] and
-          # [1, num_instances_i, num_keypoints_i], respectively. Note that
-          # num_instances_i and num_keypoints_i refers to the number of
-          # instances and keypoints for class i, respectively.
-          (kpt_coords_for_class, kpt_scores_for_class, _) = (
-              self._postprocess_keypoints_for_class_and_image(
-                  keypoint_heatmap,
-                  keypoint_offsets,
-                  keypoint_regression,
-                  classes,
-                  y_indices_for_kpt_class,
-                  x_indices_for_kpt_class,
-                  boxes_for_kpt_class,
-                  ex_ind,
-                  kp_params,
-              ))
+        # Postprocess keypoints and scores for class and single image. Shapes
+        # are [1, num_instances_i, num_keypoints_i, 2] and
+        # [1, num_instances_i, num_keypoints_i], respectively. Note that
+        # num_instances_i and num_keypoints_i refers to the number of
+        # instances and keypoints for class i, respectively.
+        (kpt_coords_for_class, kpt_scores_for_class, _) = (
+            self._postprocess_keypoints_for_class_and_image(
+                keypoint_heatmap,
+                keypoint_offsets,
+                keypoint_regression,
+                classes,
+                y_indices_for_kpt_class,
+                x_indices_for_kpt_class,
+                boxes_for_kpt_class,
+                ex_ind,
+                kp_params,
+            ))
 
-          # Expand keypoint dimension (with padding) so that coordinates and
-          # scores have shape [1, num_instances_i, num_total_keypoints, 2] and
-          # [1, num_instances_i, num_total_keypoints], respectively.
-          kpts_coords_for_class_padded, kpt_scores_for_class_padded = (
-              _pad_to_full_keypoint_dim(kpt_coords_for_class,
-                                        kpt_scores_for_class,
-                                        kp_params.keypoint_indices,
-                                        total_num_keypoints))
-          return kpts_coords_for_class_padded, kpt_scores_for_class_padded
+        # Prepare the indices for scatter_nd. The resulting combined_inds has
+        # the shape of [num_instances_i * num_keypoints_i, 2], where the first
+        # column corresponds to the instance IDs and the second column
+        # corresponds to the keypoint IDs.
+        kpt_inds = tf.constant(kp_params.keypoint_indices, dtype=tf.int32)
+        kpt_inds = tf.expand_dims(kpt_inds, axis=0)
+        instance_inds_expand = tf.expand_dims(instance_inds, axis=-1)
+        kpt_inds_expand = kpt_inds * tf.ones_like(instance_inds_expand)
+        instance_inds_expand = instance_inds_expand * tf.ones_like(kpt_inds)
+        combined_inds = tf.stack(
+            [instance_inds_expand, kpt_inds_expand], axis=2)
+        combined_inds = tf.reshape(combined_inds, [-1, 2])
 
-        def false_fn():
-          """Logics to execute when the instance_inds is an empty set."""
-          return (tf.zeros([1, 0, total_num_keypoints, 2], dtype=tf.float32),
-                  tf.zeros([1, 0, total_num_keypoints], dtype=tf.float32))
+        # Reshape the keypoint coordinates/scores to [num_instances_i *
+        # num_keypoints_i, 2]/[num_instances_i * num_keypoints_i] to be used
+        # by scatter_nd_add.
+        kpt_coords_for_class = tf.reshape(kpt_coords_for_class, [-1, 2])
+        kpt_scores_for_class = tf.reshape(kpt_scores_for_class, [-1])
+        kpt_coords_for_example_all_det = tf.tensor_scatter_nd_add(
+            kpt_coords_for_example_all_det,
+            combined_inds, kpt_coords_for_class)
+        kpt_scores_for_example_all_det = tf.tensor_scatter_nd_add(
+            kpt_scores_for_example_all_det,
+            combined_inds, kpt_scores_for_class)
 
-        true_fn = functools.partial(
-            true_fn, keypoint_heatmap, keypoint_offsets, keypoint_regression,
-            classes, y_indices, x_indices, boxes, instance_inds, ex_ind,
-            kp_params)
-        # Use dimension values instead of tf.size for tf.lite compatibility.
-        results = tf.cond(num_ind[0] > 0, true_fn, false_fn)
-
-        kpt_coords_for_class_list.append(results[0])
-        kpt_scores_for_class_list.append(results[1])
-        instance_inds_for_class_list.append(instance_inds)
-
-      # Concatenate all keypoints across all classes (single example).
-      kpt_coords_for_example = tf.concat(kpt_coords_for_class_list, axis=1)
-      kpt_scores_for_example = tf.concat(kpt_scores_for_class_list, axis=1)
-      instance_inds_for_example = tf.concat(instance_inds_for_class_list,
-                                            axis=0)
-
-      (kpt_coords_for_example_all_det,
-       kpt_scores_for_example_all_det) = self._scatter_keypoints_to_batch(
-           num_ind, kpt_coords_for_example, kpt_scores_for_example,
-           instance_inds_for_example, max_detections, total_num_keypoints)
-
-    kpt_coords_for_example_list.append(kpt_coords_for_example_all_det)
-    kpt_scores_for_example_list.append(kpt_scores_for_example_all_det)
+      kpt_coords_for_example_list.append(
+          tf.expand_dims(kpt_coords_for_example_all_det, axis=0))
+      kpt_scores_for_example_list.append(
+          tf.expand_dims(kpt_scores_for_example_all_det, axis=0))
 
     # Concatenate all keypoints and scores from all examples in the batch.
     # Shapes are [batch_size, max_detections, num_total_keypoints, 2] and

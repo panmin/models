@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2022 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,10 +20,10 @@ from typing import List, Tuple
 from official.core import exp_factory
 from official.modeling import hyperparams
 from official.modeling.multitask import configs as multitask_configs
-from official.vision.beta.configs import backbones
-from official.vision.beta.configs import common
 from official.vision.beta.projects.simclr.configs import simclr as simclr_configs
 from official.vision.beta.projects.simclr.modeling import simclr_model
+from official.vision.configs import backbones
+from official.vision.configs import common
 
 
 @dataclasses.dataclass
@@ -51,6 +51,9 @@ class SimCLRMTModelConfig(hyperparams.Config):
   # L2 weight decay is used in the model, not in task.
   # Note that this can not be used together with lars optimizer.
   l2_weight_decay: float = 0.0
+  init_checkpoint: str = ''
+  # backbone_projection or backbone
+  init_checkpoint_modules: str = 'backbone_projection'
 
 
 @exp_factory.register_config_factory('multitask_simclr')
