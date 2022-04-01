@@ -1,0 +1,26 @@
+<annotation>
+	<folder>newball</folder>
+	<filename>IMG_0036_frame057.jpg</filename>
+	<path>/Users/gaocheng/Desktop/ML/newball/IMG_0036_frame057.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>1080</width>
+		<height>1920</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>174</xmin>
+			<ymin>696</ymin>
+			<xmax>399</xmax>
+			<ymax>945</ymax>
+		</bndbox>
+	</object>
+</annotation>

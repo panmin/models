@@ -1,0 +1,26 @@
+<annotation>
+	<folder>2</folder>
+	<filename>IMG_4772_frame018.jpg</filename>
+	<path>C:\Users\zonggang\Desktop\python\篮球训练图片\round 2\黑暗2021_11_18(1)\黑暗2021_11_18\2\IMG_4772_frame018.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>1080</width>
+		<height>1920</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>248</xmin>
+			<ymin>641</ymin>
+			<xmax>430</xmax>
+			<ymax>819</ymax>
+		</bndbox>
+	</object>
+</annotation>

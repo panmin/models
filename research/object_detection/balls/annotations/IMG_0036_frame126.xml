@@ -1,0 +1,26 @@
+<annotation>
+	<folder>11181717</folder>
+	<filename>IMG_0036_frame126.jpg</filename>
+	<path>/Users/gaocheng/Desktop/ML/11181717/IMG_0036_frame126.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>1080</width>
+		<height>1920</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>1</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>923</xmin>
+			<ymin>578</ymin>
+			<xmax>1080</xmax>
+			<ymax>827</ymax>
+		</bndbox>
+	</object>
+</annotation>

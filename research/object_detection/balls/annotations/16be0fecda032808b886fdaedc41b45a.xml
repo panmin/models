@@ -1,0 +1,26 @@
+<annotation>
+	<folder>images</folder>
+	<filename>16be0fecda032808b886fdaedc41b45a.jpeg</filename>
+	<path>C:\Users\zonggang\Downloads\dy_voc1213\dy_voc\images\16be0fecda032808b886fdaedc41b45a.jpeg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>533</width>
+		<height>300</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>262</xmin>
+			<ymin>113</ymin>
+			<xmax>313</xmax>
+			<ymax>166</ymax>
+		</bndbox>
+	</object>
+</annotation>

@@ -1,0 +1,26 @@
+<annotation>
+	<folder>cc</folder>
+	<filename>20c8608c1b80a3453b438d75ff66d2bd.jpeg</filename>
+	<path>/Users/gaocheng/Desktop/ML/202111251600/cc/20c8608c1b80a3453b438d75ff66d2bd.jpeg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>468</width>
+		<height>643</height>
+		<depth>1</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>246</xmin>
+			<ymin>232</ymin>
+			<xmax>284</xmax>
+			<ymax>270</ymax>
+		</bndbox>
+	</object>
+</annotation>

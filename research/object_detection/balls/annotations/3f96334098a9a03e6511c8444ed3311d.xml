@@ -1,0 +1,26 @@
+<annotation>
+	<folder>wt</folder>
+	<filename>3f96334098a9a03e6511c8444ed3311d.jpeg</filename>
+	<path>/Users/gaocheng/Desktop/ML/202111251600/wt/3f96334098a9a03e6511c8444ed3311d.jpeg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>537</width>
+		<height>331</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>235</xmin>
+			<ymin>30</ymin>
+			<xmax>329</xmax>
+			<ymax>126</ymax>
+		</bndbox>
+	</object>
+</annotation>

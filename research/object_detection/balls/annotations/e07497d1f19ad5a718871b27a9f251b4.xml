@@ -1,0 +1,26 @@
+<annotation>
+	<folder>round</folder>
+	<filename>e07497d1f19ad5a718871b27a9f251b4.jpeg</filename>
+	<path>/Users/gaocheng/Desktop/ML/round/e07497d1f19ad5a718871b27a9f251b4.jpeg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>1080</width>
+		<height>720</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>555</xmin>
+			<ymin>398</ymin>
+			<xmax>680</xmax>
+			<ymax>523</ymax>
+		</bndbox>
+	</object>
+</annotation>

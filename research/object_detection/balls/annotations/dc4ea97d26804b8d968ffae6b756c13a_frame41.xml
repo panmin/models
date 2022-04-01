@@ -1,0 +1,26 @@
+<annotation>
+	<folder>baby</folder>
+	<filename>dc4ea97d26804b8d968ffae6b756c13a_frame41.jpg</filename>
+	<path>/Users/gaocheng/Desktop/ML/current/baby/dc4ea97d26804b8d968ffae6b756c13a_frame41.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>720</width>
+		<height>1280</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>266</xmin>
+			<ymin>260</ymin>
+			<xmax>595</xmax>
+			<ymax>612</ymax>
+		</bndbox>
+	</object>
+</annotation>

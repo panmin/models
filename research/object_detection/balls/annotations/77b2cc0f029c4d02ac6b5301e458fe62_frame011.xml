@@ -1,0 +1,26 @@
+<annotation>
+	<folder>2</folder>
+	<filename>77b2cc0f029c4d02ac6b5301e458fe62_frame011.jpg</filename>
+	<path>C:\Users\zonggang\Desktop\python\篮球训练图片\ballchild1209\2\77b2cc0f029c4d02ac6b5301e458fe62_frame011.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>448</width>
+		<height>960</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>139</xmin>
+			<ymin>407</ymin>
+			<xmax>173</xmax>
+			<ymax>441</ymax>
+		</bndbox>
+	</object>
+</annotation>

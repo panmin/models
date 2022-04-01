@@ -1,0 +1,26 @@
+<annotation>
+	<folder>personball</folder>
+	<filename>62d85241e154c9d395b64f52c0464e92.jpeg</filename>
+	<path>/Users/gaocheng/Desktop/ML/202111251600/personball/62d85241e154c9d395b64f52c0464e92.jpeg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>800</width>
+		<height>800</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>452</xmin>
+			<ymin>210</ymin>
+			<xmax>599</xmax>
+			<ymax>361</ymax>
+		</bndbox>
+	</object>
+</annotation>

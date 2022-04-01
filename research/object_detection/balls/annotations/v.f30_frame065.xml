@@ -1,0 +1,26 @@
+<annotation>
+	<folder>jd</folder>
+	<filename>v.f30_frame065.jpg</filename>
+	<path>/Users/gaocheng/Desktop/ML/current/jd/v.f30_frame065.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>724</width>
+		<height>1280</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>383</xmin>
+			<ymin>372</ymin>
+			<xmax>519</xmax>
+			<ymax>497</ymax>
+		</bndbox>
+	</object>
+</annotation>

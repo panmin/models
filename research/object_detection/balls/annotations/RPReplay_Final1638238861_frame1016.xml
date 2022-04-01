@@ -1,0 +1,26 @@
+<annotation>
+	<folder>images1</folder>
+	<filename>RPReplay_Final1638238861_frame1016.jpg</filename>
+	<path>C:\Users\zonggang\Desktop\python\篮球训练图片\20211130\20211130补充篮球视频\images1\RPReplay_Final1638238861_frame1016.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>886</width>
+		<height>1920</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>331</xmin>
+			<ymin>1186</ymin>
+			<xmax>455</xmax>
+			<ymax>1300</ymax>
+		</bndbox>
+	</object>
+</annotation>

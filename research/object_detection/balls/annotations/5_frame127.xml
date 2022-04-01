@@ -1,0 +1,26 @@
+<annotation>
+	<folder>5</folder>
+	<filename>5_frame127.jpg</filename>
+	<path>C:\Users\zonggang\Desktop\python\篮球训练图片\poseball211201\5\5_frame127.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>296</width>
+		<height>640</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>120</xmin>
+			<ymin>413</ymin>
+			<xmax>151</xmax>
+			<ymax>446</ymax>
+		</bndbox>
+	</object>
+</annotation>

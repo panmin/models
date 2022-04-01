@@ -1,0 +1,26 @@
+<annotation>
+	<folder>images</folder>
+	<filename>IMG_0036_frame054.jpg</filename>
+	<path>C:\Users\zonggang\Downloads\dy_voc1213\dy_voc\images\IMG_0036_frame054.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>1080</width>
+		<height>1920</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>105</xmin>
+			<ymin>622</ymin>
+			<xmax>301</xmax>
+			<ymax>829</ymax>
+		</bndbox>
+	</object>
+</annotation>

@@ -1,0 +1,26 @@
+<annotation>
+	<folder>poseball1129-2</folder>
+	<filename>IMG_02922021112.jpg</filename>
+	<path>C:\Users\zonggang\Desktop\python\篮球训练图片\poseball1129-2\IMG_02922021112.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>1125</width>
+		<height>2436</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>ball</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<xmin>698</xmin>
+			<ymin>1223</ymin>
+			<xmax>806</xmax>
+			<ymax>1333</ymax>
+		</bndbox>
+	</object>
+</annotation>
