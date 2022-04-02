@@ -3934,7 +3934,8 @@
 ./images/dc4ea97d26804b8d968ffae6b756c13a_frame70.jpg ./annotations/dc4ea97d26804b8d968ffae6b756c13a_frame70.xml
 ./images/dc4ea97d26804b8d968ffae6b756c13a_frame71.jpg ./annotations/dc4ea97d26804b8d968ffae6b756c13a_frame71.xml
 ./images/dc4ea97d26804b8d968ffae6b756c13a_frame72.jpg ./annotations/dc4ea97d26804b8d968ffae6b756c13a_frame72.xml
-./images/dc4ea97d26804b8d968ffae6b756c13a_frame73.jpg ./annotations/dc4ea97d26804b8d968ffae6b756c13a_frame73.xml./images/7710041670a14acd925659f1ff912a10_frame001.jpg ./annotations/7710041670a14acd925659f1ff912a10_frame001.xml
+./images/dc4ea97d26804b8d968ffae6b756c13a_frame73.jpg ./annotations/dc4ea97d26804b8d968ffae6b756c13a_frame73.xml
+./images/7710041670a14acd925659f1ff912a10_frame001.jpg ./annotations/7710041670a14acd925659f1ff912a10_frame001.xml
 ./images/7710041670a14acd925659f1ff912a10_frame003.jpg ./annotations/7710041670a14acd925659f1ff912a10_frame003.xml
 ./images/7710041670a14acd925659f1ff912a10_frame004.jpg ./annotations/7710041670a14acd925659f1ff912a10_frame004.xml
 ./images/7710041670a14acd925659f1ff912a10_frame005.jpg ./annotations/7710041670a14acd925659f1ff912a10_frame005.xml
